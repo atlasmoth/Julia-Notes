@@ -32,6 +32,13 @@ using CategoricalArrays
 # ╔═╡ 9701b120-ceb7-4144-a3db-100bc3d2cb06
 using  CSV, HTTP
 
+# ╔═╡ 064292c8-a203-4df5-8a99-586197e927d0
+begin
+using AbstractGPs
+using LinearAlgebra
+using Stheno
+end
+
 # ╔═╡ ec1b890a-80fd-4656-9bcf-47a9846809bc
 begin
 	dist = Normal(5,10)
@@ -48,6 +55,20 @@ cycles = CSV.read(HTTP.get(url).body, DataFrame)
 	 predict(gm1,cycles)
 end
 
+# ╔═╡ ccdcff04-7d9b-43d5-93a6-9810fa38ed12
+begin
+	normDist = Normal()
+	plotter(start=100) = begin
+	x = []
+	for _ in 1:10000
+		sum(rand(Bernoulli(.5),1)) == 0 ? start = start .- rand(normDist,1) : start = start .+ rand(normDist,1)
+		append!(x,start)
+	end
+	return x
+	end
+	plot([plotter(200) for i in 1:5])
+end
+
 # ╔═╡ 1855e532-3918-4d53-ae98-097702cd491c
 @bind col PlutoUI.Slider(1:1000, default = 1,show_value=true)
 
@@ -58,39 +79,118 @@ poissonSamples = rand(Poisson(3),col)
 plot(fit(Normal,poissonSamples),seriestype=:scatter)
 end
 
-# ╔═╡ ccdcff04-7d9b-43d5-93a6-9810fa38ed12
+# ╔═╡ 92fa40bb-6715-4ab8-b100-9ae379af294d
 begin
-	normDist = Normal(5,20)
-	plotter(start=100) = begin
-	x = []
-	for _ in 1:10000
-		sum(rand(Bernoulli(.5),1)) == 0 ? start = start .- rand(normDist,1) : start = start .+ rand(normDist,1)
-		append!(x,start)
-	end
-	return x
-	end
-	plot([plotter(200) for i in 1:100])
+	plot()
+	expDist = Pareto() 
+plot!(cumsum(rand(expDist,col)),linetype=:steppre)
 end
 
-# ╔═╡ 92fa40bb-6715-4ab8-b100-9ae379af294d
+# ╔═╡ 64fbf5dc-1ce0-4c26-a129-38445d268350
+begin
 
+# Create a pseudo random number generator for reproducibility.
+
+
+# Construct a Gaussian Process Probabilistic Programme,
+# which is just an AbstractGP.
+f = @gppp let
+
+    # Define a smooth latent process that we wish to infer.
+    f = GP(SEKernel())
+
+    # Define the two noise processes described.
+    g = x->sin.(x) .- 5.0 .+ sqrt.(abs.(x)) 
+    noise1 = sqrt(1e-2) * GP(MaternKernel()) + g
+    noise2 = sqrt(1e-1) * GP(3.5, ExponentialKernel())
+
+    # Define the processes that we get to observe.
+    y1 = f + noise1
+    y2 = f + noise2
+end;
+
+# Generate some toy observations of `y1` and `y2`.
+X1 = GPPPInput(:y1, rand( 3) * 10);
+X2 = GPPPInput(:y2, rand( 10) * 10);
+X = BlockData(X1, X2);
+y = rand( f(X));
+ŷ1, ŷ2 = split(X, y);
+
+# Compute the posterior GPPP.
+f′ = posterior(f(X), y);
+
+# Sample jointly from the posterior processes.
+X_ = range(-2.5, stop=12.5, length=500);
+Xp_f = GPPPInput(:f, X_);
+Xp_y1 = GPPPInput(:y1, X_);
+Xp_y2 = GPPPInput(:y2, X_);
+Xp = BlockData(Xp_f, Xp_y1, Xp_y2); 
+
+# Sample jointly from posterior over process, and split up the result.
+f′Xp, y1′Xp, y2′Xp = split(Xp, rand( f′(Xp, 1e-9), 11));
+
+# Compute and split up posterior marginals. We're not using the plotting
+# recipes from AbstractGPs here, to make it clear how one might compute the
+# posterior marginals manually.
+ms = marginals(f′(Xp, 1e-9));
+μf′, μy1′, μy2′ = split(Xp, mean.(ms));
+σf′, σy1′, σy2′ = split(Xp, std.(ms));
+
+# Instantiate plot and chose backend
+plotly();
+posterior_plot = plot();
+
+# Plot posterior over y1.
+plot!(posterior_plot, X_, μy1′; color="#9DE1E3", ribbon=3σy1′, label="", fillalpha=0.3);
+plot!(posterior_plot, X_, y1′Xp; color="#9DE1E3", label="", alpha=0.2, linewidth=1);
+scatter!(posterior_plot, X1.x, ŷ1;
+    markercolor="#9DE1E3",
+    markershape=:circle,
+    markerstrokewidth=0.0,
+    markersize=4,
+    markeralpha=0.8,
+    label="Buhari",
+);
+
+# Plot posterior over y2.
+plot!(posterior_plot, X_, μy2′; color="#216869", ribbon=3σy2′, label="", fillalpha=0.3);
+plot!(posterior_plot, X_, y2′Xp; color="#216869", label="", alpha=0.2, linewidth=1);
+scatter!(posterior_plot, X2.x, ŷ2;
+    markercolor=:green,
+    markershape=:circle,
+    markerstrokewidth=0.0,
+    markersize=4,
+    markeralpha=0.8,
+    label="awolowo",
+);
+
+# Plot posterior over f.
+plot!(posterior_plot, X_, μf′; color="#BBA0F1", ribbon=3σf′, label="f", fillalpha=0.3);
+plot!(posterior_plot, X_, f′Xp; color="#BBA0F1", label="", alpha=0.2, linewidth=1);
+
+# display(posterior_plot);
+end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
+AbstractGPs = "99985d1d-32ba-4be9-9821-2ec096f28918"
 CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
 CategoricalArrays = "324d7699-5711-5eae-9e2f-1d82baa6b597"
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
 GLM = "38e38edf-8417-5370-95a0-9cbb8c7f171a"
 HTTP = "cd3eb016-35fb-5094-929b-558a96fad6f3"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
 PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
 RDatasets = "ce6b1742-4840-55fa-b093-852dadbb1d8b"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 StatsPlots = "f3b207a7-027a-5e70-b257-86293d7955fd"
+Stheno = "8188c328-b5d6-583d-959b-9690869a5511"
 
 [compat]
+AbstractGPs = "~0.5.3"
 CSV = "~0.9.11"
 CategoricalArrays = "~0.10.2"
 DataFrames = "~1.2.2"
@@ -101,6 +201,7 @@ Plots = "~1.23.6"
 PlutoUI = "~0.7.19"
 RDatasets = "~0.7.6"
 StatsPlots = "~0.14.28"
+Stheno = "~0.7.15"
 """
 
 # ╔═╡ 00000000-0000-0000-0000-000000000002
@@ -112,6 +213,12 @@ deps = ["LinearAlgebra"]
 git-tree-sha1 = "485ee0867925449198280d4af84bdb46a2a404d0"
 uuid = "621f4979-c628-5d54-868e-fcf4e3e8185c"
 version = "1.0.1"
+
+[[AbstractGPs]]
+deps = ["ChainRulesCore", "Distributions", "FillArrays", "IrrationalConstants", "KernelFunctions", "LinearAlgebra", "Random", "RecipesBase", "Reexport", "Statistics", "StatsBase", "Test"]
+git-tree-sha1 = "e2af18922f65ea8cee7b8cd97a1668691f76f4b2"
+uuid = "99985d1d-32ba-4be9-9821-2ec096f28918"
+version = "0.5.3"
 
 [[AbstractPlutoDingetjes]]
 deps = ["Pkg"]
@@ -140,6 +247,12 @@ git-tree-sha1 = "e214a9b9bd1b4e1b4f15b22c0994862b66af7ff7"
 uuid = "68821587-b530-5797-8361-c406ea357684"
 version = "3.5.0+3"
 
+[[ArrayLayouts]]
+deps = ["FillArrays", "LinearAlgebra", "SparseArrays"]
+git-tree-sha1 = "623a32b87ef0b85d26320a8cc7e57ded707aef64"
+uuid = "4c555306-a7a7-4459-81d9-ec55ddd5c99a"
+version = "0.7.5"
+
 [[Artifacts]]
 uuid = "56f22d72-fd6d-98f1-02f0-08ddc0907c33"
 
@@ -151,6 +264,12 @@ version = "1.0.1"
 
 [[Base64]]
 uuid = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
+
+[[BlockArrays]]
+deps = ["ArrayLayouts", "FillArrays", "LinearAlgebra"]
+git-tree-sha1 = "5524e27323cf4c4505699c3fb008c3f772269945"
+uuid = "8e7c35d0-a365-5155-bbbb-fb81a777f24e"
+version = "0.16.9"
 
 [[Bzip2_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
@@ -175,6 +294,12 @@ deps = ["DataAPI", "Future", "Missings", "Printf", "Requires", "Statistics", "Un
 git-tree-sha1 = "c308f209870fdbd84cb20332b6dfaf14bf3387f8"
 uuid = "324d7699-5711-5eae-9e2f-1d82baa6b597"
 version = "0.10.2"
+
+[[ChainRules]]
+deps = ["ChainRulesCore", "Compat", "LinearAlgebra", "Random", "RealDot", "Statistics"]
+git-tree-sha1 = "035ef8a5382a614b2d8e3091b6fdbb1c2b050e11"
+uuid = "082447d4-558c-5d27-93f4-14fc19e9eca2"
+version = "1.12.1"
 
 [[ChainRulesCore]]
 deps = ["Compat", "LinearAlgebra", "SparseArrays"]
@@ -218,6 +343,12 @@ git-tree-sha1 = "417b0ed7b8b838aa6ca0a87aadf1bb9eb111ce40"
 uuid = "5ae59095-9a9b-59fe-a467-6f913c188581"
 version = "0.12.8"
 
+[[CommonSubexpressions]]
+deps = ["MacroTools", "Test"]
+git-tree-sha1 = "7b8a93dba8af7e3b42fecabf646260105ac373f7"
+uuid = "bbf7d656-a473-5ed7-a52c-81e309532950"
+version = "0.3.0"
+
 [[Compat]]
 deps = ["Base64", "Dates", "DelimitedFiles", "Distributed", "InteractiveUtils", "LibGit2", "Libdl", "LinearAlgebra", "Markdown", "Mmap", "Pkg", "Printf", "REPL", "Random", "SHA", "Serialization", "SharedArrays", "Sockets", "SparseArrays", "Statistics", "Test", "UUIDs", "Unicode"]
 git-tree-sha1 = "dce3e3fea680869eaa0b774b2e8343e9ff442313"
@@ -227,6 +358,11 @@ version = "3.40.0"
 [[CompilerSupportLibraries_jll]]
 deps = ["Artifacts", "Libdl"]
 uuid = "e66e0078-7015-5450-92f7-15fbd957f2ae"
+
+[[CompositionsBase]]
+git-tree-sha1 = "455419f7e328a1a2493cabc6428d79e951349769"
+uuid = "a33af91c-f02d-484b-be07-31d278c5ca2b"
+version = "0.1.1"
 
 [[Contour]]
 deps = ["StaticArrays"]
@@ -274,6 +410,18 @@ uuid = "ade2ca70-3891-5945-98fb-dc099432e06a"
 [[DelimitedFiles]]
 deps = ["Mmap"]
 uuid = "8bb1440f-4735-579b-a4ab-409b98df4dab"
+
+[[DiffResults]]
+deps = ["StaticArrays"]
+git-tree-sha1 = "c18e98cba888c6c25d1c3b048e4b3380ca956805"
+uuid = "163ba53b-c6d8-5494-b064-1a9d43ac40c5"
+version = "1.0.3"
+
+[[DiffRules]]
+deps = ["LogExpFunctions", "NaNMath", "Random", "SpecialFunctions"]
+git-tree-sha1 = "3287dacf67c3652d3fed09f4c12c187ae4dbb89a"
+uuid = "b552c78f-8df3-52c6-915a-8e097449b14b"
+version = "1.4.0"
 
 [[Distances]]
 deps = ["LinearAlgebra", "Statistics", "StatsAPI"]
@@ -378,6 +526,12 @@ git-tree-sha1 = "8339d61043228fdd3eb658d86c926cb282ae72a8"
 uuid = "59287772-0a20-5a39-b81b-1366585eb4c0"
 version = "0.4.2"
 
+[[ForwardDiff]]
+deps = ["CommonSubexpressions", "DiffResults", "DiffRules", "LinearAlgebra", "LogExpFunctions", "NaNMath", "Preferences", "Printf", "Random", "SpecialFunctions", "StaticArrays"]
+git-tree-sha1 = "6406b5112809c08b1baa5703ad274e1dded0652f"
+uuid = "f6369f11-7733-5829-9624-2563aa707210"
+version = "0.10.23"
+
 [[FreeType2_jll]]
 deps = ["Artifacts", "Bzip2_jll", "JLLWrappers", "Libdl", "Pkg", "Zlib_jll"]
 git-tree-sha1 = "87eb71354d8ec1a96d4a7636bd57a7347dde3ef9"
@@ -389,6 +543,11 @@ deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
 git-tree-sha1 = "aa31987c2ba8704e23c6c8ba8a4f769d5d7e4f91"
 uuid = "559328eb-81f9-559d-9380-de523a88c83c"
 version = "1.0.10+0"
+
+[[Functors]]
+git-tree-sha1 = "e4768c3b7f597d5a352afa09874d16e3c3f6ead2"
+uuid = "d9f16b24-f501-4c13-a1f2-28368ffc5196"
+version = "0.2.7"
 
 [[Future]]
 deps = ["Random"]
@@ -476,6 +635,12 @@ git-tree-sha1 = "f7be53659ab06ddc986428d3a9dcc95f6fa6705a"
 uuid = "b5f81e59-6552-4d32-b1f0-c071b021bf89"
 version = "0.2.2"
 
+[[IRTools]]
+deps = ["InteractiveUtils", "MacroTools", "Test"]
+git-tree-sha1 = "95215cd0076a150ef46ff7928892bc341864c73c"
+uuid = "7869d1d1-7146-5819-86e3-90919afe41df"
+version = "0.4.3"
+
 [[IniFile]]
 deps = ["Test"]
 git-tree-sha1 = "098e4d2c533924c921f9f9847274f2ad89e018b8"
@@ -553,6 +718,12 @@ deps = ["Distributions", "DocStringExtensions", "FFTW", "Interpolations", "Stats
 git-tree-sha1 = "591e8dc09ad18386189610acafb970032c519707"
 uuid = "5ab0869b-81aa-558d-bb23-cbf5423bbe9b"
 version = "0.6.3"
+
+[[KernelFunctions]]
+deps = ["ChainRulesCore", "Compat", "CompositionsBase", "Distances", "FillArrays", "Functors", "IrrationalConstants", "LinearAlgebra", "LogExpFunctions", "Random", "Requires", "SpecialFunctions", "StatsBase", "TensorCore", "Test", "ZygoteRules"]
+git-tree-sha1 = "9c3d38dafc02feae68a4747813b8b0205fd03da5"
+uuid = "ec8451be-7e33-11e9-00cf-bbf324bd1392"
+version = "0.10.26"
 
 [[LAME_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
@@ -890,6 +1061,12 @@ git-tree-sha1 = "01d341f502250e81f6fec0afe662aa861392a3aa"
 uuid = "c84ed2f1-dad5-54f0-aa8e-dbefe2724439"
 version = "0.4.2"
 
+[[RealDot]]
+deps = ["LinearAlgebra"]
+git-tree-sha1 = "9f0a1b71baaf7650f4fa8a1d168c7fb6ee41f0c9"
+uuid = "c1ae055f-0cd5-4b69-90a6-9a35b1a98df9"
+version = "0.1.0"
+
 [[RecipesBase]]
 git-tree-sha1 = "44a75aa7a527910ee3d1751d1f0e4148698add9e"
 uuid = "3cdcf5f2-1ef4-517c-9805-6587b60abb01"
@@ -1015,6 +1192,12 @@ git-tree-sha1 = "eb007bb78d8a46ab98cd14188e3cec139a4476cf"
 uuid = "f3b207a7-027a-5e70-b257-86293d7955fd"
 version = "0.14.28"
 
+[[Stheno]]
+deps = ["AbstractGPs", "BlockArrays", "ChainRulesCore", "FillArrays", "KernelFunctions", "LinearAlgebra", "MacroTools", "Random", "Reexport", "Statistics", "Zygote", "ZygoteRules"]
+git-tree-sha1 = "9ae442344559f72e352097111650e17a8fdc1e5b"
+uuid = "8188c328-b5d6-583d-959b-9690869a5511"
+version = "0.7.15"
+
 [[StructArrays]]
 deps = ["Adapt", "DataAPI", "StaticArrays", "Tables"]
 git-tree-sha1 = "2ce41e0d042c60ecd131e9fb7154a3bfadbf50d3"
@@ -1050,6 +1233,12 @@ version = "1.6.0"
 [[Tar]]
 deps = ["ArgTools", "SHA"]
 uuid = "a4e569a6-e804-4fa4-b0f3-eef7a1d5b13e"
+
+[[TensorCore]]
+deps = ["LinearAlgebra"]
+git-tree-sha1 = "1feb45f88d133a655e001435632f019a9a1bcdb6"
+uuid = "62fd8b95-f654-4bbd-a8a5-9c27f68ccd50"
+version = "0.1.1"
 
 [[Test]]
 deps = ["InteractiveUtils", "Logging", "Random", "Serialization"]
@@ -1263,6 +1452,18 @@ git-tree-sha1 = "cc4bf3fdde8b7e3e9fa0351bdeedba1cf3b7f6e6"
 uuid = "3161d3a3-bdf6-5164-811a-617609db77b4"
 version = "1.5.0+0"
 
+[[Zygote]]
+deps = ["AbstractFFTs", "ChainRules", "ChainRulesCore", "DiffRules", "Distributed", "FillArrays", "ForwardDiff", "IRTools", "InteractiveUtils", "LinearAlgebra", "MacroTools", "NaNMath", "Random", "Requires", "SpecialFunctions", "Statistics", "ZygoteRules"]
+git-tree-sha1 = "2c30f2df0ba43c17e88c8b55b5b22c401f7cde4e"
+uuid = "e88e6eb3-aa80-5325-afca-941959d7151f"
+version = "0.6.30"
+
+[[ZygoteRules]]
+deps = ["MacroTools"]
+git-tree-sha1 = "8c1a8e4dfacb1fd631745552c8db35d0deb09ea0"
+uuid = "700de1a5-db45-46bc-99cf-38207098b444"
+version = "0.2.2"
+
 [[libass_jll]]
 deps = ["Artifacts", "Bzip2_jll", "FreeType2_jll", "FriBidi_jll", "HarfBuzz_jll", "JLLWrappers", "Libdl", "Pkg", "Zlib_jll"]
 git-tree-sha1 = "5982a94fcba20f02f42ace44b9894ee2b140fe47"
@@ -1320,9 +1521,11 @@ version = "0.9.1+5"
 # ╠═ec1b890a-80fd-4656-9bcf-47a9846809bc
 # ╠═9701b120-ceb7-4144-a3db-100bc3d2cb06
 # ╠═8e9a2889-dd5e-4b8d-9374-7ce94a84a510
-# ╠═1855e532-3918-4d53-ae98-097702cd491c
 # ╠═0370f085-3869-42ab-8a81-00fed82ca2e4
 # ╠═ccdcff04-7d9b-43d5-93a6-9810fa38ed12
+# ╠═1855e532-3918-4d53-ae98-097702cd491c
 # ╠═92fa40bb-6715-4ab8-b100-9ae379af294d
+# ╠═064292c8-a203-4df5-8a99-586197e927d0
+# ╠═64fbf5dc-1ce0-4c26-a129-38445d268350
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
